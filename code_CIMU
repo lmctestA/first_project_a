@@ -3,7 +3,7 @@
 
 /* Public variables ----------------------------------------------------------*/
 extern volatile FunctionalState UCOM_IS_PROCESS_COMMAND;
-
+// Thêm dòng này vào,,,,,,,,,,,,,,,,,,,,,
 
 /* External functions define -------------------------------------------------*/
 

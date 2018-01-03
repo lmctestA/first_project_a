@@ -1,0 +1,316 @@
+/* Includes ------------------------------------------------------------------*/
+#include "user_CIMU.h"
+
+/* Public variables ----------------------------------------------------------*/
+extern volatile FunctionalState UCOM_IS_PROCESS_COMMAND;
+
+
+/* External functions define -------------------------------------------------*/
+
+		/** 
+		* @brief  UDELAY module 
+		*/
+		#define CIMU_UDELAY_ms(MS)							UDELAY_ms(MS)
+
+/* Public variables ----------------------------------------------------------*/
+
+/* Private types -------------------------------------------------------------*/
+
+
+
+/* Private constants/macros --------------------------------------------------*/
+
+/**
+ * @defgroup Module Pin define
+ * @{
+ */
+		/** 
+		* @brief   CIMU Indicator Pin define 
+		*/
+			#define 	UCIMU_GREEN_LED_PIN  				   GPIO_Pin_12
+			#define 	UCIMU_GREEN_LED_PORT 				   GPIOD
+			#define 	UCIMU_GREEN_LED_CLK						 RCC_AHB1Periph_GPIOD
+			#define 	UCIMU_GREEN_LED_SOURCE				 GPIO_PinSource12	
+			#define		UCIMU_GREEN_LED_CLK_Cmd		  	 RCC_AHB1PeriphClockCmd
+			
+		/**  
+		* @brief   USARTx Tx Pin define  
+		*/
+			#define 	UCIMU_TX_PIN  								GPIO_Pin_10
+			#define 	UCIMU_TX_PORT 								GPIOC
+			#define 	UCIMU_TX_CLK									RCC_AHB1Periph_GPIOC
+			#define 	UCIMU_TX_SOURCE								GPIO_PinSource10
+			#define 	UCIMU_TX_AF					  				GPIO_AF_UART4				
+			#define		UCIMU_TX_CLK_Cmd		  				RCC_AHB1PeriphClockCmd
+			
+
+		/**  
+		* @brief   USARTx Rx Pin define  
+		*/
+			#define 	UCIMU_RX_PIN  								GPIO_Pin_11
+			#define 	UCIMU_RX_PORT 								GPIOC
+			#define 	UCIMU_RX_CLK									RCC_AHB1Periph_GPIOC
+			#define 	UCIMU_RX_SOURCE								GPIO_PinSource11
+			#define 	UCIMU_RX_AF					  				GPIO_AF_UART4					
+			#define		UCIMU_RX_CLK_Cmd		  				RCC_AHB1PeriphClockCmd
+/**
+ * @}
+ */	 
+		 
+
+/**
+ * @defgroup USARTx define 
+ * @{
+ */	
+		/**  
+		* @brief   CIMU Module define  
+		*/
+			#define		UCIMU							  					UART4
+			#define		UCIMU_IRQn					  				UART4_IRQn
+			#define		UCIMU_CLK											RCC_APB1Periph_UART4
+			#define		UCIMU_CLK_Cmd					  			RCC_APB1PeriphClockCmd
+
+		/**  
+		* @brief   DMA define  
+		*/
+			#define   UCIMU_DMA_CLK				 			  	RCC_AHB1Periph_DMA1
+			#define		UCIMU_DMA_CLK_Cmd			  			RCC_AHB1PeriphClockCmd
+			#define   UCIMU_DMA_CHANNEL							DMA_Channel_4
+			#define   UCIMU_DMA_STREAM							DMA1_Stream2
+			#define   UCIMU_DMA_RECEIVE_BUFFER_ADDR	(uint32_t)(&(UCIMU_ReceiveBuffer))				
+			#define 	UCIMU_DMA_PERIPHERAL_ADDR			(uint32_t)(&(UCIMU->DR))
+			#define 	UCIMU_DMA_PRIORITY						DMA_Priority_High
+			#define 	UCIMU_DMA_FLAG_TCIF						DMA_IT_TCIF2
+			#define		UCIMU_DMA_IRQn								DMA1_Stream2_IRQn
+			#define   UCIMU_DMA_IRQHandler					DMA1_Stream2_IRQHandler
+			
+		/** 
+		* @brief   Message receive format : xxx\r\n 
+		*/	 
+			#define 	UCIMU_MAX_RECEIVE_BUFFER 			25	
+			
+		/** 
+		* @brief   Check buffer parameter :
+		*/	 
+			#define 	IS_UCIMU_RECEIVE_BUFFER_INDEX(INDEX) 	 (INDEX < UCIMU_MAX_RECEIVE_BUFFER)
+
+		/** 
+		* @brief   Received message length:
+		*/	 
+			#define 	UCIMU_RECEIVE_MESSAGE_LENGTH				 	 21			// Ex : $RQ,4195,4295,4433*\r\n
+	 
+		/** 
+		* @brief   Comma Index :
+		*/	 
+			#define		UCIMU_COMMA_1						 				3
+			#define		UCIMU_COMMA_2						 				8
+			#define		UCIMU_COMMA_3							 		 13	
+			
+/**
+ * @}
+ */	 
+
+/* Private variables ---------------------------------------------------------*/
+
+static volatile char UCIMU_ReceiveBuffer[UCIMU_MAX_RECEIVE_BUFFER];
+
+static CIMUData_TypeDef CIMU_Data;
+
+
+/* Private function prototypes -----------------------------------------------*/
+static void UCIMU_ProcessReceiveData(void);
+
+
+/* Exported function body ----------------------------------------------------*/
+
+void UCIMU_Config(unsigned int BaudRate)
+{
+		GPIO_InitTypeDef  GPIO_InitStructure;
+		USART_InitTypeDef USART_InitStructure;
+		NVIC_InitTypeDef NVIC_InitStructure;
+		DMA_InitTypeDef DMA_InitStructure;
+
+		GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
+    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_100MHz;
+    GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL;
+	
+	
+		/* CIMU Indicator Config */   
+
+		GPIO_InitStructure.GPIO_Mode = GPIO_Mode_OUT;
+		
+		UCIMU_GREEN_LED_CLK_Cmd(UCIMU_GREEN_LED_CLK, ENABLE);
+		
+    GPIO_InitStructure.GPIO_Pin = UCIMU_GREEN_LED_PIN;
+		GPIO_Init(UCIMU_GREEN_LED_PORT, &GPIO_InitStructure);
+	
+	
+		/* COM TX Pin Config */
+	
+		GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;
+	
+		UCIMU_TX_CLK_Cmd(UCIMU_TX_CLK, ENABLE);
+
+		GPIO_InitStructure.GPIO_Pin = UCIMU_TX_PIN;
+		
+    GPIO_Init(UCIMU_TX_PORT, &GPIO_InitStructure);
+    
+    GPIO_PinAFConfig(UCIMU_TX_PORT, UCIMU_TX_SOURCE, UCIMU_TX_AF);	
+	
+	
+		/* COM RX Pin Config */
+		
+		UCIMU_RX_CLK_Cmd(UCIMU_RX_CLK, ENABLE);
+
+		GPIO_InitStructure.GPIO_Pin = UCIMU_RX_PIN;
+		
+    GPIO_Init(UCIMU_RX_PORT, &GPIO_InitStructure);
+    
+    GPIO_PinAFConfig(UCIMU_RX_PORT, UCIMU_RX_SOURCE, UCIMU_RX_AF);			
+	
+	
+		/* Config COM */
+
+		UCIMU_CLK_Cmd(UCIMU_CLK, ENABLE); 
+		
+		USART_InitStructure.USART_BaudRate = BaudRate;
+		USART_InitStructure.USART_WordLength = USART_WordLength_8b;
+		USART_InitStructure.USART_StopBits = USART_StopBits_1;
+		USART_InitStructure.USART_Parity = USART_Parity_No;
+		USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
+		USART_InitStructure.USART_Mode = USART_Mode_Tx | USART_Mode_Rx;
+		USART_Init(UCIMU, &USART_InitStructure);
+			
+			
+		/* COM receive DMA Config */		
+		
+		USART_DMACmd(UCIMU, USART_DMAReq_Rx, ENABLE);
+		
+		UCIMU_DMA_CLK_Cmd(UCIMU_DMA_CLK, ENABLE);
+		
+		DMA_InitStructure.DMA_Channel = UCIMU_DMA_CHANNEL; 
+		DMA_InitStructure.DMA_Memory0BaseAddr = UCIMU_DMA_RECEIVE_BUFFER_ADDR;
+		DMA_InitStructure.DMA_PeripheralBaseAddr = UCIMU_DMA_PERIPHERAL_ADDR;
+		DMA_InitStructure.DMA_DIR = DMA_DIR_PeripheralToMemory;
+		DMA_InitStructure.DMA_BufferSize = 1;																		// Config Later
+		DMA_InitStructure.DMA_PeripheralInc = DMA_PeripheralInc_Disable;
+		DMA_InitStructure.DMA_MemoryInc = DMA_MemoryInc_Enable;
+		DMA_InitStructure.DMA_PeripheralDataSize = DMA_PeripheralDataSize_Byte;
+		DMA_InitStructure.DMA_MemoryDataSize = DMA_PeripheralDataSize_Byte;
+		DMA_InitStructure.DMA_Mode = DMA_Mode_Circular;  
+		DMA_InitStructure.DMA_Priority = UCIMU_DMA_PRIORITY;
+		DMA_InitStructure.DMA_FIFOMode = DMA_FIFOMode_Disable; 
+		DMA_InitStructure.DMA_FIFOThreshold = DMA_FIFOThreshold_HalfFull;
+		DMA_InitStructure.DMA_MemoryBurst = DMA_MemoryBurst_Single;
+		DMA_InitStructure.DMA_PeripheralBurst = DMA_PeripheralBurst_Single;
+		
+		DMA_Init(UCIMU_DMA_STREAM, &DMA_InitStructure);
+			
+		DMA_Cmd(UCIMU_DMA_STREAM, DISABLE);																			// Enable DMA later
+	
+	
+		/* DMA Transfer complete interupt config */		
+		DMA_ITConfig(UCIMU_DMA_STREAM, DMA_IT_TC, DISABLE);
+		
+		NVIC_InitStructure.NVIC_IRQChannel = UCIMU_DMA_IRQn;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = UNVIC_CIMU_DMA_TC_PreemptionPriority;
+    NVIC_InitStructure.NVIC_IRQChannelSubPriority 			 = UNVIC_CIMU_DMA_TC_SubPriority;
+    NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+    NVIC_Init(&NVIC_InitStructure); 
+	
+		/* COM Enable later */
+		USART_Cmd(UCIMU, DISABLE); 
+}
+
+void CIMU_START_RECEIVE(void)
+{
+		FunctionalState CIMU_DMA_SYMS_DONE = DISABLE;
+		
+		// Enable USART	
+		USART_Cmd(UCIMU, ENABLE); 
+	
+		// Enable DMA interupt
+		DMA_ITConfig(UCIMU_DMA_STREAM, DMA_IT_TC, ENABLE);
+		
+		// DMA synchronization
+		while (CIMU_DMA_SYMS_DONE != ENABLE)
+		{
+			UCIMU_DMA_STREAM->NDTR = UCIMU_RECEIVE_MESSAGE_LENGTH;
+
+			DMA_Cmd(UCIMU_DMA_STREAM, ENABLE);	
+			
+			CIMU_UDELAY_ms(10);
+			
+			if (UCIMU_ReceiveBuffer[0] != '$')
+			{
+					DMA_Cmd(UCIMU_DMA_STREAM, DISABLE);	
+			}
+			else
+			{
+					CIMU_DMA_SYMS_DONE = ENABLE;
+			}
+		}
+}
+
+void CIMU_STOP_RECEIVE(void)
+{
+		USART_Cmd(UCIMU, DISABLE);
+
+		DMA_ITConfig(UCIMU_DMA_STREAM, DMA_IT_TC, DISABLE);
+	
+		DMA_Cmd(UCIMU_DMA_STREAM, DISABLE);
+		
+		GPIO_ResetBits(UCIMU_GREEN_LED_PORT, UCIMU_GREEN_LED_PIN);
+}
+
+
+void UCIMU_GetData(CIMUData_TypeDef* DataOut)
+{	
+		DataOut->Roll 	= CIMU_Data.Roll;
+		DataOut->Pitch  = CIMU_Data.Pitch;
+		DataOut->Yaw 		= CIMU_Data.Yaw;
+}
+
+
+/* Private functions body ----------------------------------------------------*/
+
+static void UCIMU_ProcessReceiveData(void)
+{	
+		float temp_roll_raw, temp_pitch_raw, temp_yaw_raw;
+	
+		const char* Message = (const char*)(&UCIMU_ReceiveBuffer[0]);
+				
+		// Process message here
+		
+		temp_roll_raw  = (Message[UCIMU_COMMA_1 + 1] - '0')*1000 + (Message[UCIMU_COMMA_1 + 2] - '0')*100 + (Message[UCIMU_COMMA_1 + 3] - '0')*10 + (Message[UCIMU_COMMA_1 + 4] - '0')*1;
+		temp_pitch_raw = (Message[UCIMU_COMMA_2 + 1] - '0')*1000 + (Message[UCIMU_COMMA_2 + 2] - '0')*100 + (Message[UCIMU_COMMA_2 + 3] - '0')*10 + (Message[UCIMU_COMMA_2 + 4] - '0')*1;
+		temp_yaw_raw   = (Message[UCIMU_COMMA_3 + 1] - '0')*1000 + (Message[UCIMU_COMMA_3 + 2] - '0')*100 + (Message[UCIMU_COMMA_3 + 3] - '0')*10 + (Message[UCIMU_COMMA_3 + 4] - '0')*1;
+		
+		temp_roll_raw = (temp_roll_raw  - 4300.0f)/10.0f;
+			
+		temp_roll_raw = - temp_roll_raw;
+	
+		CIMU_Data.Roll  = temp_roll_raw;
+		CIMU_Data.Pitch = (temp_pitch_raw - 4300.0f)/10.0f;
+		CIMU_Data.Yaw   = (temp_yaw_raw   - 4300.0f)/10.0f;
+}
+
+/******************************************************************************/
+/* Peripherals Interrupt Handlers --------------------------------------------*/
+/******************************************************************************/
+void UCIMU_DMA_IRQHandler(void)
+{
+		if (DMA_GetITStatus(UCIMU_DMA_STREAM, UCIMU_DMA_FLAG_TCIF) != RESET) 
+		{
+			 if (UCOM_IS_PROCESS_COMMAND == DISABLE)
+			 {
+					UCIMU_ProcessReceiveData();
+					GPIO_ToggleBits(UCIMU_GREEN_LED_PORT, UCIMU_GREEN_LED_PIN);
+					DMA_ClearITPendingBit(UCIMU_DMA_STREAM, UCIMU_DMA_FLAG_TCIF);
+			 }
+			 else
+			 {
+					DMA_ClearITPendingBit(UCIMU_DMA_STREAM, UCIMU_DMA_FLAG_TCIF);
+			 }
+		}
+}
